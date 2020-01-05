@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Target Name="BeforeBuild" Condition="'$(YurionCMake)' == 'CMake'">
+    <ItemGroup>
+      <Reference Include="%(ProjectReference.Name)">
+        <HintPath Condition="'%(ProjectReference.HintPath)' != ''">%(ProjectReference.HintPath)</HintPath>
+        <HintPath Condition="'%(ProjectReference.HintPath)' == ''">$(OutputPath)\%(ProjectReference.Name).dll</HintPath>
+      </Reference>
+    </ItemGroup>
+    <ItemGroup>
+      <ProjectReference Remove="%(ProjectReference.Identity)" />
+    </ItemGroup>
+  </Target>
+</Project>
