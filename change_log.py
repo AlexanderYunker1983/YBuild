@@ -20,7 +20,7 @@ class OtherException(Exception):
         self.value = value
     def __str__(self):
         return self.value
-# Нужно заменить на валидные значения логин и пароль для работы с Mercurial
+#use valid login and password
 def hgcmd(cmd,*args):
     return [
         'hg',

@@ -524,7 +524,7 @@ def build_3rdparty(args):
 
 def hg_checkout(dep):
     print '### Checking out ' + dep.dir + '...'
-    #Необходимо указать валидные адреса HG-сервера и логина+пароля
+    #use valid login and password and server path
     srcroot = r'http://hgserver/'
     hgclone_args = [
         srcroot+'/'+dep.dir,

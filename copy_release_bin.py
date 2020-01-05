@@ -19,7 +19,7 @@ class OtherException(Exception):
         self.value = value
     def __str__(self):
         return self.value
-# Нужно заменить на валидные значения логин и пароль если предполагается работать с Mercuarial
+#use valid login and password
 def hgcmd(cmd,*args):
     return [
         'hg',
@@ -71,7 +71,7 @@ def main():
         
         if len(version) > 0:
             print 'Copy symbol ' + version
-            # Нужно ввести валидный путь до сервера символов
+            #use symbols server path
             dst_dir = '\\\\server\\ReleaseSymbol\\' + project_name + '\\' + version[:version.rfind('.')] + '\\' + prefix_dst + '\\'
             try:
                 os.makedirs(dst_dir)

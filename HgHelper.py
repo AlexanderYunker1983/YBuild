@@ -2,7 +2,7 @@ import os
 from SubprocessHelper import SubprocessHelper
 
 class Repository():
-# Необходимо заменить логин и пароль на валидные, если предполагается работать с Mercurial
+#Use valid login and password
     def __init__(self, repo_path):
         hg_args = ['--config','auth.all.username=user',
         '--config','auth.all.password=password',
