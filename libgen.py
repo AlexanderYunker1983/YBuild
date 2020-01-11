@@ -544,7 +544,7 @@ def hg_checkout(dep):
 
 def git_checkout(dep):
     print '### Checking out ' + dep.dir + '...'
-    srcroot = r'git@github.com:AlexanderYunker1983'
+    srcroot = r'https://github.com/AlexanderYunker1983'
     hgclone_args = [
         srcroot+'/'+dep.dir,
         join(tpdir,dep.dir)
