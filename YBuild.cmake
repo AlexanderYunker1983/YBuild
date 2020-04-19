@@ -451,7 +451,6 @@ function(YBUILD_ADD_3RDPARTY_DIRECTORIES)
             link_directories("${VSCRT}/lib")
             YBUILD_REGISTER_LIBRARY(comsuppw YBUILD_LINK_COMSUPPW)
         else()
-            message(FATAL_ERROR "Can't select corresponding CRT library for Visual C++ compiler version=${MSVC_VERSION}.")
         endif()
     endif(MSVC)
     
