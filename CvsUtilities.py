@@ -1,7 +1,7 @@
 import sys
 import os
 from os.path import exists, split, join
-import HgHelper
+import CvsHelper
 from xml.etree.ElementTree import parse
 from deputils import find_lib, read_deps, filter_deps
 from sys import platform
@@ -134,12 +134,14 @@ def process_repo_based_on_options(repo, options):
 
 def main():
     options, args = process_command_line()
+    print options
+    print args
     for arg in args:
         path = os.path.abspath(arg)
 
         print 'Searching %s...' % path
 
-        for repo in HgHelper.find_repositories(path):
+        for repo in CvsHelper.find_repositories(path):
             repo.relative_repo_path = os.path.relpath(repo.path, path)
 
             if not options.thirdparty and not options.workwiththirdpartyincurrentrepo:
@@ -148,6 +150,20 @@ def main():
             process_repo_based_on_options(repo, options)
             print '#####################################################'
     return 0
+
+def clean_update_3rdparty(tpdir, libs):
+    for lib in libs:
+        path = join(tpdir, lib.dir)
+
+        print 'Searching %s...' % path
+
+        for repo in CvsHelper.find_repositories(path):
+            repo.relative_repo_path = os.path.relpath(repo.path, path)
+
+            pull_update_repo(repo)
+            print '#####################################################'
+    return 0
+
 
 if __name__ == '__main__':
     status = main()

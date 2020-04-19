@@ -6,8 +6,8 @@ from __future__ import with_statement
 from sys import argv, exit, stdout
 from subprocess import Popen, PIPE
 from platform import system
-from os.path import exists, split, join, isabs, abspath
-from os import mkdir, getcwdu, chdir
+from os.path import exists, split, join, isabs, abspath, dirname
+from os import mkdir, getcwdu, chdir, environ
 from inspect import isfunction
 from shutil import rmtree
 from traceback import print_exc
@@ -18,11 +18,13 @@ from xml.etree.ElementTree import parse
 from collections import namedtuple
 from string import whitespace, ascii_letters, digits
 from StringIO import StringIO
+
+from SubprocessHelper import SubprocessHelper
 from deputils import find_lib, read_deps, filter_deps
 from nuget import NuGet
 from msbuild_restore import MsBuild
 from third_party import get_3rdparty_dir
-import HgUtilities
+import CvsUtilities
 
 # местоположение исходников (CMAKE_SOURCE_DIR). јбсолютный путь
 SRC_DIR = getcwdu()
@@ -39,29 +41,28 @@ if '-G' in args_list:
 GENERATOR_UNIX_MAKEFILES = "Unix Makefiles"
 GENERATOR_ECLIPSE4_UNIX_MAKEFILES = "Eclipse CDT4 - Unix Makefiles"
 GENERATOR_NMAKE_MAKEFILES = "NMake Makefiles"
-GENERATOR_NMAKE_MAKEFILES_VS8 = "NMake Makefiles/VS8"
-GENERATOR_NMAKE_MAKEFILES_VS9 = "NMake Makefiles/VS9"
-GENERATOR_NMAKE_MAKEFILES_VS10 = "NMake Makefiles/VS10"
-GENERATOR_NMAKE_MAKEFILES_VS12 = "NMake Makefiles/VS12"
 GENERATOR_NMAKE_MAKEFILES_VS14 = "NMake Makefiles/VS14"
 GENERATOR_NMAKE_MAKEFILES_VS15 = "NMake Makefiles/VS15"
-GENERATOR_NMAKE_MAKEFILES_VS14x64 = "NMake Makefiles/VS14 Win64"
-GENERATOR_NMAKE_MAKEFILES_VS15x64 = "NMake Makefiles/VS15 Win64"
-GENERATOR_VS8 = "Visual Studio 8 2005"
-GENERATOR_VS9 = "Visual Studio 9 2008"
-GENERATOR_VS10 = "Visual Studio 10"
-GENERATOR_VS12 = "Visual Studio 12"
+GENERATOR_NMAKE_MAKEFILES_VS16 = "NMake Makefiles/VS16"
 GENERATOR_VS14 = "Visual Studio 14"
 GENERATOR_VS15 = "Visual Studio 15"
-GENERATOR_VS14x64 = "Visual Studio 14 2015 Win64"
-GENERATOR_VS15x64 = "Visual Studio 15 2017 Win64"
+GENERATOR_VS16 = "Visual Studio 16"
 GENERATOR_NONE = "None"
 
+nmake_generators = [GENERATOR_NMAKE_MAKEFILES, GENERATOR_NMAKE_MAKEFILES_VS14,
+                    GENERATOR_NMAKE_MAKEFILES_VS15, GENERATOR_NMAKE_MAKEFILES_VS16]
+vs_generators = [GENERATOR_NMAKE_MAKEFILES, GENERATOR_NMAKE_MAKEFILES_VS14,
+                 GENERATOR_NMAKE_MAKEFILES_VS15, GENERATOR_NMAKE_MAKEFILES_VS16,
+                 GENERATOR_VS14, GENERATOR_VS15, GENERATOR_VS16]
+
+umake_generators = [GENERATOR_UNIX_MAKEFILES, GENERATOR_ECLIPSE4_UNIX_MAKEFILES]
+
 blackhole = open(devnull,'w')
+
 if '-v' in args_list or '--verbose' in args_list :
     blackhole = stdout
 
-configs = ['Debug','Release']
+configs = ['Release']
 libs = []
 custom_build_dir_suffix = ''
 use_memory_guard = 0
@@ -76,58 +77,29 @@ def cmdline_to_string(args):
             newargs.append('"' + arg + '"')
         else:
             newargs.append(arg)
-    
+
     return ' '.join(newargs)
-        
+
 def get_build_code(generator):
     if generator == 'Unix Makefiles': return ''
     elif generator.find('CodeBlocks') != -1: return '_CB'
     elif generator.find('Eclipse CDT4') != -1: return '_Eclipse4'
     elif generator.find('KDevelop') != -1: return '_KDevelop'
     elif generator.find('NMake') != -1:
-        if generator == GENERATOR_NMAKE_MAKEFILES: return '_NMake'
-        elif generator == GENERATOR_NMAKE_MAKEFILES_VS8: return '_NMake_VS8'
-        elif generator == GENERATOR_NMAKE_MAKEFILES_VS9: return '_NMake_VS9'
-        elif generator == GENERATOR_NMAKE_MAKEFILES_VS10: return '_NMake_VS10'
-        elif generator == GENERATOR_NMAKE_MAKEFILES_VS12: return '_NMake_VS12'
-        elif generator == GENERATOR_NMAKE_MAKEFILES_VS14: return '_NMake_VS14'
-        elif generator == GENERATOR_NMAKE_MAKEFILES_VS15: return '_NMake_VS15'
-        elif generator == GENERATOR_NMAKE_MAKEFILES_VS14x64: return '_NMake_VS14'
-        elif generator == GENERATOR_NMAKE_MAKEFILES_VS15x64: return '_NMake_VS15'
+        return '_NMake_VS' + vs_version
     elif generator.find('Visual Studio') != -1:
-        if generator.find('Studio 6') != -1: return '_VS6'
-        elif generator.find('Studio 7') != -1: return '_VS7'
-        elif generator.find('Studio 8') != -1: return ''
-        elif generator.find('Studio 9') != -1: return '_VS9'
-        elif generator.find('Studio 10') != -1: return '_VS10'
-        elif generator.find('Studio 12') != -1: return '_VS12'
-        elif generator.find('Studio 14') != -1: return '_VS14'
-        elif generator.find('Studio 15') != -1: return '_VS15'
+        return '_VS' + vs_version
     return 'Unk'
 
 def get_build_tags(generator):
     tags = []
-    
+
     if system() == 'Windows': tags.append('windows')
     elif system() == 'Linux': tags.append('linux')
     else: raise Exception('get_build_tags: Unknown system type')
-    
-    if generator.find('Visual Studio') != -1:
-        if generator.find('Studio 6') != -1: tags.append('vs6')
-        elif generator.find('Studio 7') != -1: tags.append('vs7')
-        elif generator.find('Studio 8') != -1: tags.append('vs8')
-        elif generator.find('Studio 9') != -1: tags.append('vs9')
-        elif generator.find('Studio 10') != -1: tags.append('vs10')
-        elif generator.find('Studio 12') != -1: tags.append('vs12')
-        elif generator.find('Studio 14') != -1: tags.append('vs14')
-        elif generator.find('Studio 15') != -1: tags.append('vs15')
-    elif generator.find(GENERATOR_NMAKE_MAKEFILES) != -1:
-        if generator.find('VS8') != -1: tags.append('vs8')
-        elif generator.find('VS9') != -1: tags.append('vs9')
-        elif generator.find('VS10') != -1: tags.append('vs10')
-        elif generator.find('VS12') != -1: tags.append('vs12')
-        elif generator.find('VS14') != -1: tags.append('vs14')
-        elif generator.find('VS15') != -1: tags.append('vs15')
+
+    if generator in vs_generators:
+        tags.append('vs' + vs_version)
 
     return tags
 
@@ -140,16 +112,13 @@ def wrap_chdir(func):
         subdir = cwd+'/' + CMAKE_RELATIVE_DIR + '/' + get_build_folder_subdir_name_only(args[0])
         if not exists(subdir): mkdir(subdir)
         chdir(subdir)
-        
+
         try:
             return func(*args,**kwargs)
         finally:
             chdir(cwd)
-                
-    return helper
 
-    if len(args) >= 1 and isfunction(args[0]): return wrap_chdir_aux(args[0])
-    else: return wrap_chdir_aux
+    return helper
 
 def call_helper(args,**kwargs):
     quiet = True
@@ -157,7 +126,7 @@ def call_helper(args,**kwargs):
         quiet = False
         kwargs['stderr'] = PIPE
         kwargs['stdout'] = PIPE
-        
+
     p = Popen(args,**kwargs)
     (sstdout,sstderr) = p.communicate()
     ret = p.returncode
@@ -169,32 +138,31 @@ def call_helper(args,**kwargs):
             print sstderr
             print "STDOUT was:"
             print sstdout
-    return ret           
+    return ret
 
 if system() == 'Windows':
     import _winreg
 
-    automatic_generators = [GENERATOR_VS8,GENERATOR_VS9,GENERATOR_VS10,GENERATOR_VS12,GENERATOR_VS14,GENERATOR_VS15,GENERATOR_VS14x64,GENERATOR_VS15x64,
-    GENERATOR_NMAKE_MAKEFILES,GENERATOR_NMAKE_MAKEFILES_VS8,GENERATOR_NMAKE_MAKEFILES_VS9,GENERATOR_NMAKE_MAKEFILES_VS10, GENERATOR_NMAKE_MAKEFILES_VS12, GENERATOR_NMAKE_MAKEFILES_VS14, GENERATOR_NMAKE_MAKEFILES_VS15, GENERATOR_NMAKE_MAKEFILES_VS14x64, GENERATOR_NMAKE_MAKEFILES_VS15x64, GENERATOR_NONE]
-    
-    automatic_generator = GENERATOR_VS8
+    automatic_generators = vs_generators
+
+    automatic_generator = GENERATOR_VS14
     generator = automatic_generator
-    
+
     def get_lib_path(cfg):
         return '3rdparty\\_lib\\' + cfg + '\\'
 
     def get_bin_path(cfg):
         return '3rdparty\\_bin\\' + cfg + '\\'
-    
+
     def get_exe_name(name):
         return name + '.exe'
-        
+
     def get_lib_names_platform(lib,cfg):
         return [get_lib_path(cfg) + lib.dir + '/' + lib.name + '.lib']
-    
+
     def detect_best_visual_studio_version():
         versions = ['14.0','12.0','10.0','9.0','8.0']
-        
+
         k = None
         for version in versions:
             try:
@@ -203,49 +171,45 @@ if system() == 'Windows':
                 return version
             except:
                 pass
-        
+
         return '8.0'
-        
+
     def find_visual_studio(g):
-        if g == GENERATOR_NMAKE_MAKEFILES:
-            best = detect_best_visual_studio_version()
-            k = _winreg.OpenKey(_winreg.HKEY_LOCAL_MACHINE,r'Software\Microsoft\VisualStudio\\' + best, 0, _winreg.KEY_READ|512)
-        elif g == GENERATOR_VS8 or g == GENERATOR_NMAKE_MAKEFILES_VS8:
-            k = _winreg.OpenKey(_winreg.HKEY_LOCAL_MACHINE,r'Software\Microsoft\VisualStudio\8.0', 0, _winreg.KEY_READ|512)
-        elif g == GENERATOR_VS9 or g == GENERATOR_NMAKE_MAKEFILES_VS9:
-            k = _winreg.OpenKey(_winreg.HKEY_LOCAL_MACHINE,r'Software\Microsoft\VisualStudio\9.0', 0, _winreg.KEY_READ|512)
-        elif g == GENERATOR_VS10 or g == GENERATOR_NMAKE_MAKEFILES_VS10:
-            k = _winreg.OpenKey(_winreg.HKEY_LOCAL_MACHINE,r'Software\Microsoft\VisualStudio\10.0', 0, _winreg.KEY_READ|512)
-        elif g == GENERATOR_VS12 or g == GENERATOR_NMAKE_MAKEFILES_VS12:
-            k = _winreg.OpenKey(_winreg.HKEY_LOCAL_MACHINE,r'Software\Microsoft\VisualStudio\12.0', 0, _winreg.KEY_READ|512)
-        elif g == GENERATOR_VS14 or g == GENERATOR_VS14x64 or g == GENERATOR_NMAKE_MAKEFILES_VS14 or g == GENERATOR_NMAKE_MAKEFILES_VS14x64:
-            k = _winreg.OpenKey(_winreg.HKEY_LOCAL_MACHINE,r'Software\Microsoft\VisualStudio\14.0', 0, _winreg.KEY_READ|512)               
-        elif g == GENERATOR_VS15 or g == GENERATOR_VS15x64 or g == GENERATOR_NMAKE_MAKEFILES_VS15 or g == GENERATOR_NMAKE_MAKEFILES_VS15x64:
-            k = _winreg.OpenKey(_winreg.HKEY_LOCAL_MACHINE,r'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\SxS\VS7', 0, _winreg.KEY_READ|512)
-            msvsdir = _winreg.QueryValueEx(k, '15.0')[0] + r'Common7\IDE\\'
-            vcvarsall = '..\Tools\VsDevCmd.bat'
-            return msvsdir, vcvarsall 
-        msvsdir = _winreg.QueryValueEx(k,'InstallDir')
-        k.Close()
-        return msvsdir[0], r'..\..\vc\vcvarsall.bat'
-    
-    def mycall(g,args,**kwargs):
+        version = int(vs_version)
+        ybuild_dir = dirname(__file__)
+        subprocess_helper = SubprocessHelper()
+        subprocess_helper.run(join(ybuild_dir ,r'bin\vswhere.exe') +
+                              ' -legacy -version [{0},{1}) -latest -property installationPath'.format(version, version + 1), shell=False)
+        vs_path = subprocess_helper.standard_output_stream[0]
+
+        if version > 14:
+            subprocess_helper = SubprocessHelper()
+            subprocess_helper.run(join(ybuild_dir, r'bin\vswhere.exe') +
+                                  ' -version [{0},{1}) -latest -requires Microsoft.Component.Msbuild -find MSBuild\**\Bin\MSBuild.exe'.format(version, version + 1), shell=False)
+            environ['MSBUILD_PATH'] = subprocess_helper.standard_output_stream[0]
+        return join(vs_path, r'Common7\IDE'), join(vs_path,r'Common7\Tools\VsDevCmd.bat')
+
+    def mycall_with_environment(g, args, **kwargs):
         msvs, vcvarsall = find_visual_studio(g)
-        kwargs['shell'] = True
-        
-        if automatic_generator.find('Win64') != -1:
+        if use_amd64:
             arch = "-arch=amd64"
-            if(g == GENERATOR_VS14x64 or g == GENERATOR_NMAKE_MAKEFILES_VS14x64):
+            if g == GENERATOR_VS14 or g == GENERATOR_NMAKE_MAKEFILES_VS14:
                 arch = "amd64"
 
-            args = ['call', msvs + vcvarsall, arch, '&&'] + args
+            args = ['call', vcvarsall, arch, '&&'] + args
         else:
-            args = ['call', msvs + vcvarsall, '&&'] + args
+            args = ['call', vcvarsall, '&&'] + args
+
+        return mycall(g, args, **kwargs)
+
+    def mycall(g,args,**kwargs):
+        kwargs['shell'] = True
+        # print args
         return call_helper(args,**kwargs)
-        
+
 elif system() == 'Linux':
-    automatic_generators = [GENERATOR_UNIX_MAKEFILES, GENERATOR_ECLIPSE4_UNIX_MAKEFILES]
-    
+    automatic_generators = umake_generators
+
     automatic_generator = GENERATOR_UNIX_MAKEFILES
     generator = automatic_generator
 
@@ -254,12 +218,15 @@ elif system() == 'Linux':
 
     def get_bin_path(cfg):
         return '3rdparty/_bin/' + cfg + '/'
-    
+
     def get_exe_name(name):
         return name
-        
+
     def get_lib_names_platform(lib,cfg):
         return [get_lib_path(cfg) + lib.dir + '/lib' + lib.name + '.a']
+
+    def mycall_with_environment(g, args, **kwargs):
+        return mycall(g, args, **kwargs)
 
     def mycall(g,*args,**kwargs):
         return call_helper(*args,**kwargs)
@@ -271,17 +238,17 @@ else:
 def create_3rdparty_cmake():
     sio = StringIO()
     sio.write('### Generated by libgen.py, do not modify\n\n')
-    
-    if automatic_generator.find('Win64') != -1: 
-     sio.write('set(YWIN64 true)\n')
-     sio.write('set(CMAKE_STATIC_LINKER_FLAGS "${CMAKE_STATIC_LINKER_FLAGS} /machine:x64")\n')     
+
+    if use_amd64:
+        sio.write('set(YWIN64 true)\n')
+        sio.write('set(CMAKE_STATIC_LINKER_FLAGS "${CMAKE_STATIC_LINKER_FLAGS} /machine:x64")\n')
 
     sio.write('set(YBUILD_TPLIB_3RDPARTY_PATH \"' + tpdir + '\")\n')
 
     for dep in libs:
         sio.write('set(YBUILD_TPLIB_' + dep.name.upper() + '_PATH \"' + join(tpdir,dep.dir) + '\")\n')
     sio.write('\n')
-    
+
     sio.write('set(YBUILD_TPLIBS_PATH\n')
     for dep in libs:
         sio.write('    \"' + join(tpdir,dep.dir) + '\"\n')
@@ -298,7 +265,7 @@ def create_3rdparty_cmake():
         sio.write('endfunction(YBUILD_TPLIB_' + dep.name.upper() + '_EXISTS)\n\n')
         sio.write('function(YBUILD_TPLIB_' + dep.name.upper() + '_' + dep.version.upper().replace('.', '_', 10) + '_EXISTS)\n')
         sio.write('endfunction(YBUILD_TPLIB_' + dep.name.upper() + '_' + dep.version.upper().replace('.', '_', 10) + '_EXISTS)\n\n')
-    
+
     sio.write('macro(YBUILD_GET_TPLIB_DIR result tplibname)\n')
     for dep in libs:
         if dep.auto_link != 'false' :
@@ -306,14 +273,14 @@ def create_3rdparty_cmake():
             sio.write('        set(${result} "' + dep.dir + '")\n')
             sio.write('    endif()\n\n')
     sio.write('endmacro(YBUILD_GET_TPLIB_DIR)\n\n')
-    
+
     if YBuildUsingNMake:
         sio.write('function(YBUILD_USING_NMAKE)\n')
         sio.write('endfunction(YBUILD_USING_NMAKE)\n\n')
-        
+
     result = sio.getvalue()
     result = sub(r'([\\])',r'\\\1',result)
-    
+
     if exists('3rdparty.cmake'):
         with open('3rdparty.cmake','rb') as f:
             old = f.read()
@@ -328,15 +295,16 @@ def create_config_header(project_name):
         'ATLMFC10': 'ATLMFC',
         'ATLMFC12': 'ATLMFC',
         'ATLMFC14': 'ATLMFC',
-        'VSCRT8': 'VSCRT', 
-        'VSCRT9': 'VSCRT', 
+        'VSCRT8': 'VSCRT',
+        'VSCRT9': 'VSCRT',
         'VSCRT10': 'VSCRT',
         'VSCRT12': 'VSCRT',
         'VSCRT14': 'VSCRT',
-        'VSCRT15': 'VSCRT'}
+        'VSCRT15': 'VSCRT',
+        'VSCRT16': 'VSCRT'}
     includes = ['TBB', 'XERCESC', 'PUGIXML', 'AES', 'DB', 'PROTOBUF', 'LOG4C', 'CPPUNIT', 'ORBACUS', 'SQLITE', 'SOUNDTOUCH',
         'DB', 'WTL', 'WMSDK', 'DIRECTX', 'PSDK', 'PARAPET', 'MW10DEC', 'AMWSDK', 'WN95SCM', 'BASS', 'MSWORD2000',
-        'CYUSB', 'NSP', 'NSIS_PLUGINAPI', 'ATLMFC8', 'ATLMFC9', 'ATLMFC10','ATLMFC12', 'ATLMFC14', 'VSCRT8', 'VSCRT9', 'VSCRT10','VSCRT12','VSCRT14','VSCRT15', "FFMPEG"
+        'CYUSB', 'NSP', 'NSIS_PLUGINAPI', 'ATLMFC8', 'ATLMFC9', 'ATLMFC10','ATLMFC12', 'ATLMFC14', 'VSCRT8', 'VSCRT9', 'VSCRT10','VSCRT12','VSCRT14','VSCRT15', 'VSCRT16', "FFMPEG"
         , 'WK', 'LEVELDB', 'CATCH', 'WK10', 'LIVE555', 'OPENCV']
     sio = StringIO()
     sio.write('// Generated by libgen.py, do not modify\r\n\r\n')
@@ -352,7 +320,7 @@ def create_config_header(project_name):
             if dep_name == 'XERCESC':
                 sio.write('#define XML_LIBRARY 1\r\n')
     sio.write('#define YBUILD_BUILD_FOLDER_NAME_ONLY ' + get_build_folder_subdir_name_only(project_name) + '\r\n')
-    if get_build_code(generator)[-3:] in ['VS9', 'S10','S12','S14','S15']:  # Visual Studio 2008 or 2010 or 2013 or 2015 or 2017
+    if generator in vs_generators:
         sio.write('#define _BIND_TO_CURRENT_VCLIBS_VERSION 1\r\n')
     if use_memory_guard:
         sio.write('#define YBUILD_USE_MEMORY_GUARD 1\r\n')
@@ -383,41 +351,38 @@ def create_spread_cmake():
         spread_target_xml = parse(SRC_DIR + '/spread-target.xml')
         for src in spread_target_xml.findall('sources/source'):
             sio.write('set(YBUILD_SPREAD_' + src.attrib['id'].upper() + '_VERSION' + ' \"' + get_spread_target_version(src) + '\")\n')
-    
+
     result = sio.getvalue()
     result = sub(r'([\\])',r'\\\1',result)
-    
+
     if exists('spread.cmake'):
         with open('spread.cmake','rb') as f:
             old = f.read()
             if old == result: return
 
-    with open('spread.cmake','wb') as f: f.write(result)        
-    
+    with open('spread.cmake','wb') as f: f.write(result)
+
 def gen_and_build(what,args,tobuild):
-    nmake_generators = [GENERATOR_NMAKE_MAKEFILES,GENERATOR_NMAKE_MAKEFILES_VS8,GENERATOR_NMAKE_MAKEFILES_VS9,GENERATOR_NMAKE_MAKEFILES_VS10, GENERATOR_NMAKE_MAKEFILES_VS12,GENERATOR_NMAKE_MAKEFILES_VS14,GENERATOR_NMAKE_MAKEFILES_VS15,GENERATOR_NMAKE_MAKEFILES_VS14x64, GENERATOR_NMAKE_MAKEFILES_VS15x64]
-    umake_generators = [GENERATOR_UNIX_MAKEFILES,GENERATOR_ECLIPSE4_UNIX_MAKEFILES]
-    
     if automatic_generator in nmake_generators:
         @wrap_chdir
         def make(what,cfg,lib):
-            if mycall(automatic_generator,['nmake',lib.name],stdout=blackhole,stderr=blackhole) != 0:
+            if mycall_with_environment(automatic_generator, ['nmake',lib.name], stdout=blackhole, stderr=blackhole) != 0:
                 raise Exception, 'build('+what+') failed'
     elif automatic_generator in umake_generators:
         @wrap_chdir
         def make(what,cfg,lib):
             if mycall(automatic_generator,['make',lib.name],stdout=blackhole,stderr=blackhole) != 0:
-                raise Exception, 'build('+what+') failed'    
+                raise Exception, 'build('+what+') failed'
     else:
         msvs, vcvarsall = find_visual_studio(automatic_generator)
         @wrap_chdir
         def make(what,cfg,lib):
-            if mycall(automatic_generator,[msvs + 'devenv.com',what+'.sln','/Build',cfg,'/Project',lib.name],stdout=blackhole,stderr=blackhole) != 0:
+            if mycall_with_environment(automatic_generator,[join(msvs, 'devenv.com'),what+'.sln','/Build',cfg,'/Project',lib.name],stdout=blackhole,stderr=blackhole) != 0:
                 raise Exception, 'build('+what+') failed'
-    
+
     totalcount = len(reduce(concat,tobuild.values()))
     progress = 1
-    
+
     for cfg in tobuild.keys():
         gen(what,args + ['-DCMAKE_BUILD_TYPE='+cfg],automatic_generator)
         for lib in tobuild[cfg]:
@@ -447,7 +412,7 @@ def get_lib_names(lib,cfg):
             get_bin_path(cfg) + lib.dir + '/' + get_exe_name('db_stat'),
             get_bin_path(cfg) + lib.dir + '/' + get_exe_name('db_verify'),
             ] + get_lib_names_platform(lib,cfg)
-            
+
     if lib.name=='live555':
         return [
             get_lib_path(cfg) + lib.dir + '/BasicUsageEnvironment.lib',
@@ -455,7 +420,7 @@ def get_lib_names(lib,cfg):
             get_lib_path(cfg) + lib.dir + '/liveMedia.lib',
             get_lib_path(cfg) + lib.dir + '/UsageEnvironment.lib',
             ]
-            
+
     if lib.name=='intel-media-sdk':
         if cfg == 'Debug':
             return [
@@ -465,9 +430,9 @@ def get_lib_names(lib,cfg):
             return [
                 get_lib_path(cfg) + lib.dir + '/libmfx.lib'
             ]
-                
+
     return get_lib_names_platform(lib,cfg)
-    
+
 def check_libs(libs):
     tobuild = dict()
     for lib in libs:
@@ -487,6 +452,10 @@ def check_libs(libs):
 def cmake_generator_name(g):
     return sub(r'^([^/]*)(/.*)?$',r'\1',g)
 
+def run_custom_script(path):
+    print '### Running custom script...'
+    execfile(path)
+
 @wrap_chdir
 def gen(what,args,g):
     if no_cmake_flag:
@@ -497,11 +466,10 @@ def gen(what,args,g):
     create_spread_cmake()
     create_config_header(what)
     generator_args = ['-G',cmake_generator_name(g)]
-    if mycall(g,[cmake_cmd] + generator_args + cmake_args + ['-DY_SYSTEM='+what] + ['-DYBUILD_EXTENSION_FOR_MANAGED_PROJECTS='+extension_for_managed_projects] + ['-DYBUILD_ENABLE_COM_REGISTRATION='+YBuildEnableComRegistration] + args + [SRC_DIR], stdout=blackhole, stderr=blackhole) != 0:
+    if mycall_with_environment(g,[cmake_cmd] + generator_args + cmake_args + ['-DY_SYSTEM='+what] + ['-DYBUILD_EXTENSION_FOR_MANAGED_PROJECTS='+extension_for_managed_projects] + ['-DYBUILD_ENABLE_COM_REGISTRATION='+YBuildEnableComRegistration] + args + [SRC_DIR], stdout=blackhole, stderr=blackhole) != 0:
         raise Exception, 'gen('+what+') failed'
 
 def build_3rdparty(args):
-    HgUtilities.main()
     print "### Checking whether 3rdparty libraries are built..."
     stdout.flush()
     tobuild = check_libs(libs)
@@ -515,12 +483,6 @@ def build_3rdparty(args):
     if(nuget_cmd != None):
         nugetHelper = NuGet(nuget_cmd + "\\NuGet.Config", nuget_cmd + "\\nuget.exe", "packages")
         nugetHelper.Restore(solution_name)
-        if get_build_code(generator)[-4:] in ['VS15']:
-            msbuildHelper = MsBuild(nuget_cmd + "\\NuGet.Config")
-            try:
-                msbuildHelper.Restore(solution_name)
-            except:
-                print "Restoring Nuget packeges failed"
 
 def hg_checkout(dep):
     print '### Checking out ' + dep.dir + '...'
@@ -565,6 +527,9 @@ if len(argv) < 2:
 system_name = argv[1]
 system_gen_args = argv[2:]
 no_cmake_flag = False
+no_3rdparty_update = False
+use_amd64 = False
+
 if '-G' in system_gen_args:
     dashg_index = system_gen_args.index('-G')
     generator = system_gen_args[dashg_index+1]
@@ -602,17 +567,16 @@ elif '--release_with_info' in system_gen_args:
     configs.append('RelWithDebInfo')
 else:
     cmake_args = []
+    configs.insert(0, 'Debug')
 
 if '--x32' in system_gen_args:
     cmake_args.append('-DY_X32=1')
     system_gen_args.remove('--x32')
-    
+
 if '--xp-toolset' in system_gen_args:
-    if generator in GENERATOR_VS12:
-        cmake_args.append('-Tv120_xp')
-    elif generator in GENERATOR_VS14:
+    if generator in GENERATOR_VS14:
         cmake_args.append('-Tv140_xp')
-    elif generator in [GENERATOR_NMAKE_MAKEFILES_VS12, GENERATOR_NMAKE_MAKEFILES_VS14]:
+    elif generator in [GENERATOR_NMAKE_MAKEFILES_VS14]:
         cmake_args.append('-DUSE_VS13_NMAKE_XP_HACK=1')
     system_gen_args.remove('--xp-toolset')
 
@@ -623,6 +587,10 @@ if '--brand-name' in system_gen_args:
 else:
     brand_name = system_name
 
+if '--x64' in system_gen_args:
+    use_amd64 = True
+    system_gen_args.remove('--x64')
+
 if '--solution-name' in system_gen_args:
     dashg_index = system_gen_args.index('--solution-name')
     solution_name = system_gen_args[dashg_index+1]
@@ -631,6 +599,11 @@ if '--solution-name' in system_gen_args:
 if '--no-cmake' in system_gen_args:
     no_cmake_flag = True
     system_gen_args.remove('--no-cmake')
+
+if '--no-3rdparty-update' in system_gen_args:
+    no_3rdparty_update = True
+    system_gen_args.remove('--no-3rdparty-update')
+
 
 cmake_args.append('-DCMAKE_BRAND_NAME='+brand_name)
 
@@ -642,20 +615,10 @@ if not exists(tpdir): mkdir(tpdir)
 if generator in automatic_generators:
     automatic_generator = generator
 
-generators_with_vcproj_extension_for_managed_projects = [GENERATOR_VS9,GENERATOR_NMAKE_MAKEFILES_VS9]
+if generator in vs_generators:
+    vs_version = generator[-2:]
 
-if generator in generators_with_vcproj_extension_for_managed_projects:
-    extension_for_managed_projects = 'vcproj'
-else:
-    extension_for_managed_projects = 'vcxproj'
-
-generators_for_nmake = [GENERATOR_NMAKE_MAKEFILES,GENERATOR_NMAKE_MAKEFILES_VS8,GENERATOR_NMAKE_MAKEFILES_VS9,GENERATOR_NMAKE_MAKEFILES_VS10, GENERATOR_NMAKE_MAKEFILES_VS12, GENERATOR_NMAKE_MAKEFILES_VS14]
-if generator in generators_for_nmake:
-    YBuildEnableComRegistration = '1'
-    YBuildUsingNMake = True
-else:
-    YBuildEnableComRegistration = '0'
-    YBuildUsingNMake = False
+extension_for_managed_projects = 'vcxproj'
 
 tags = get_build_tags(generator)
 libs = filter_deps(read_deps(parse('3rdparty.xml')),tags)
@@ -663,6 +626,13 @@ for dep in libs:
     if not exists(join(tpdir,dep.dir)):
         def helper(d): actions.append(dict(name='%s_checkout(' % d.cvs + d.dir+')', fn=lambda: globals()['%s_checkout' % d.cvs](d)))
         helper(dep)
+
+
+@wrap_chdir
+def run_nmake(what):
+    print '### Compiling ' + what + '...'
+    if mycall_with_environment(automatic_generator, ['nmake', 'all'], stdout=stdout, stderr=blackhole) != 0:
+        raise Exception, 'nmake all (' + what + ') failed'
 
 if(automatic_generator != GENERATOR_NONE):
     if system() == 'Windows':
@@ -678,11 +648,34 @@ if(automatic_generator != GENERATOR_NONE):
         cmake_cmd = join(tpdir,find_lib(libs,'cmake').dir,'bin','cmake')
         nuget_cmd = None
 
+    if not no_3rdparty_update:
+        actions.append(dict(name='3rdparty update',fn=lambda: CvsUtilities.clean_update_3rdparty(tpdir, libs)))
+
     if system_name != '3RDPARTY':
         actions.append(dict(name='build_3rdparty',fn=lambda: build_3rdparty(system_gen_args)))
 
     if not no_cmake_flag:
         actions.append(dict(name='gen('+system_name+')',fn=lambda: gen(system_name,system_gen_args,generator)))
+
+    if exists('Configuration/projgen.py'):
+        actions.append(dict(name='custom gen(' + system_name + ')', fn=lambda: run_custom_script('Configuration/projgen.py')))
+
+    if generator in nmake_generators:
+        YBuildEnableComRegistration = '1'
+        YBuildUsingNMake = True
+        actions.append(dict(name='nmake('+system_name+')', fn=lambda: run_nmake(system_name)))
+    else:
+        YBuildEnableComRegistration = '0'
+        YBuildUsingNMake = False
+        if generator not in umake_generators:
+            cmake_args.append('-A')
+            if use_amd64:
+                 cmake_args.append('x64')
+            else:
+                cmake_args.append('Win32')
+
+print 'collected ' + str(len(actions)) + ' actions:'
+print '\n'.join('     {0}: {1}'.format(*k) for k in enumerate([a['name'] for a in actions]))
 
 for action in actions:
     try:
@@ -690,11 +683,4 @@ for action in actions:
     except Exception, e:
         print 'ERROR: [exception] ' + action['name'] + ': ' + str(e)
         print_exc()
-        break
-
-try:
-    execfile('Configuration/projgen.py')
-except IOError:
-    print "\r\nINFO: no project custom generation script found"
-except:
-    print_exc()
+        exit(1)

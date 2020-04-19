@@ -2,22 +2,6 @@ import os
 from SubprocessHelper import SubprocessHelper
 
 class Repository():
-#Use valid login and password
-    def __init__(self, repo_path):
-        hg_args = ['--config','auth.all.username=user',
-        '--config','auth.all.password=password',
-        '--config','auth.all.schemes=http',
-        '--config','auth.all.prefix=*']
-        self.path = repo_path
-        self.name = os.path.basename(repo_path)
-        self.commands = {'update':('hg '+' '.join(hg_args)+' update').split()}
-        self.commands['pull'] = ('hg '+' '.join(hg_args)+' pull').split()
-        self.commands['revert'] = ['hg', 'revert','--all']
-        self.commands['purge'] = ['hg', 'purge','--all']
-        self.commands['status'] = ['hg', 'status']
-        self.commands['incoming'] = ('hg '+' '.join(hg_args)+' incoming').split()
-        self.commands['outgoing'] = ['hg', 'outgoing']
-
     def run_repo_command(self, command):
         if command:
             subprocess_helper = SubprocessHelper()
@@ -49,6 +33,23 @@ class Repository():
     def status(self):
         self.run_repo_command(self.commands['status'])
 
+class HgRepository(Repository):
+#Use valid login and password
+    def __init__(self, repo_path):
+        hg_args = ['--config','auth.all.username=user',
+        '--config','auth.all.password=password',
+        '--config','auth.all.schemes=http',
+        '--config','auth.all.prefix=*']
+        self.path = repo_path
+        self.name = os.path.basename(repo_path)
+        self.commands = {'update': ('hg ' + ' '.join(hg_args) + ' update').split(),
+                         'pull': ('hg ' + ' '.join(hg_args) + ' pull').split(),
+                         'revert': ['hg', 'revert', '--all'],
+                         'purge': ['hg', 'purge', '--all'],
+                         'status': ['hg', 'status'],
+                         'incoming': ('hg ' + ' '.join(hg_args) + ' incoming').split(),
+                         'outgoing': ['hg', 'outgoing']}
+
     def has_pending_commits(self):
         self.status()
         if self.standard_output_stream:
@@ -79,11 +80,11 @@ class GitRepository(Repository):
     def __init__(self, repo_path):
         self.path = repo_path
         self.name = os.path.basename(repo_path)
-        self.commands = {'update':['git', 'checkout']}
-        self.commands['pull'] = ['git','pull']
-        self.commands['revert'] = ['git', 'reset','--hard']
-        self.commands['purge'] = ['git', 'clean','-f', '-d', '-x']
-        self.commands['status'] = ['git', 'status']
+        self.commands = {'update': ['git', 'checkout'],
+                         'pull': ['git', 'pull'],
+                         'revert': ['git', 'reset', '--hard'],
+                         'purge': ['git', 'clean', '-f', '-d', '-x'],
+                         'status': ['git', 'status']}
 
     def supports_incoming(self):
         return True
@@ -98,7 +99,7 @@ def find_repositories(path):
     for current_path, dirs, files in os.walk(path):
         if hg_repository_folder_indicator in dirs:
             dirs[:] = [] #no point in searching the branch any further
-            yield Repository(current_path)
+            yield HgRepository(current_path)
         elif git_repository_folder_indicator in dirs:
             dirs[:] = [] #no point in searching the branch any further
             yield GitRepository(current_path)

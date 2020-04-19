@@ -1,4 +1,4 @@
-# Общий модуль для системы сборки проектов"
+# The general module for an assembly system of projects
 
 get_property(YBUILD_INCLUSION_REGISTERED GLOBAL PROPERTY YBUILD_INCLUDED DEFINED)
 if(YBUILD_INCLUSION_REGISTERED)
@@ -437,6 +437,10 @@ function(YBUILD_ADD_3RDPARTY_DIRECTORIES)
             set(VSCRT "${YBUILD_TPLIB_VSCRT15_PATH}")
         endif()
 
+        if(COMMAND YBUILD_TPLIB_VSCRT16_EXISTS)
+            set(VSCRT "${YBUILD_TPLIB_VSCRT16_PATH}")
+        endif()
+
         if(DEFINED VSCRT AND YWIN64)
             add_definitions(-DX64)
             include_directories("${VSCRT}/include")
@@ -506,6 +510,8 @@ function(YBUILD_ADD_3RDPARTY_DIRECTORIES)
             if(COMMAND YBUILD_TPLIB_FFMPEG_11_06_2015_EXISTS)
                 YBUILD_REGISTER_LIBRARY(ffmpeg YBUILD_LINK_FFMPEG2)
             elseif(COMMAND YBUILD_TPLIB_FFMPEG_4_0_1_EXISTS)
+                YBUILD_REGISTER_LIBRARY(ffmpeg YBUILD_LINK_FFMPEG4)
+            elseif(COMMAND YBUILD_TPLIB_FFMPEG_4_2_1_EXISTS)
                 YBUILD_REGISTER_LIBRARY(ffmpeg YBUILD_LINK_FFMPEG4)
             else()
                 YBUILD_REGISTER_LIBRARY(ffmpeg YBUILD_LINK_FFMPEG1)
@@ -743,15 +749,8 @@ endmacro(YBUILD_ADD_FORCE_INCLUDE_FILES)
 ################################################
 # YBUILD_FIND_MSBUILD
 macro(YBUILD_FIND_MSBUILD)
-    if(MSVC_VERSION GREATER_EQUAL 1911 AND MSVC_VERSION LESS 1920)
-        GET_FILENAME_COMPONENT(VS_PATH [HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\VisualStudio\\SxS\\VS7;15.0] ABSOLUTE CACHE)
-        set(VS_PATH "${VS_PATH}/MSBuild/15.0/Bin")
-        FIND_PROGRAM(MSBUILD_PROGRAM
-            NAMES MSBuild
-            PATHS
-            ${VS_PATH}
-            NO_DEFAULT_PATH
-            )
+    if(MSVC_VERSION GREATER_EQUAL 1911)
+        set(MSBUILD_PROGRAM "$ENV{MSBUILD_PATH}")
         MARK_AS_ADVANCED(MSBUILD_PROGRAM)
     elseif(MSVC_VERSION EQUAL 1900)
         FIND_PROGRAM(MSBUILD_PROGRAM
@@ -863,10 +862,11 @@ function(YBUILD_ADD_STANDARD_PROJECT name type)
     set(CS_PROJECT_TYPES "^(CSEXE|CSDLL|ANDLL|ANDR)$")
     set(CPPCLI_PROJECT_TYPES "^(MDLL)$")
     set(MSBUILD_PROJECT_TYPES "^(CSEXE|CSDLL|MDLL|ANDR|ANDLL)$")
-    set(SUBCOMMAND_ARGS "^(SOURCES|ADDITIONAL_SOURCES|GENERATE_PROXY_STUB|NO_PRECOMPILED_HEADER|MANAGED_INTEROP_NAMESPACE|MANAGED_PLATFORM|ADDITIONAL_MSBUILD_PROPERTIES|TARGET_BINARY_NAME|PROTO_PATH)$")
+    set(SUBCOMMAND_ARGS "^(SOURCES|ADDITIONAL_SOURCES|GENERATE_PROXY_STUB|NO_PRECOMPILED_HEADER|MANAGED_INTEROP_NAMESPACE|MANAGED_PLATFORM|ADDITIONAL_MSBUILD_PROPERTIES|TARGET_BINARY_NAME|PROTO_PATH|RUN_EVERY_TIME)$")
     
     set(GENERATE_PROXY_STUB FALSE)
     set(PRECOMPILED_HEADER TRUE)
+    set(RUN_EVERY_TIME "")
     set(ARGMODE UNKNOWN)
     
     set(MANAGED_INTEROP_NAMESPACE_NAME "${name}")
@@ -895,6 +895,8 @@ function(YBUILD_ADD_STANDARD_PROJECT name type)
                 set(GENERATE_PROXY_STUB TRUE)
             elseif("${arg}" STREQUAL "NO_PRECOMPILED_HEADER")
                 set(PRECOMPILED_HEADER FALSE)
+            elseif("${arg}" STREQUAL "RUN_EVERY_TIME")
+                set(RUN_EVERY_TIME "ALL")
             else()
                 set(ARGMODE "${arg}")
             endif()
@@ -948,9 +950,9 @@ function(YBUILD_ADD_STANDARD_PROJECT name type)
     
     if(NOT DEFINED PRJSOURCES)
         if("${type}" MATCHES "${CPP_PROJECT_TYPES}")
-            file(GLOB_RECURSE PRJSOURCES *.cpp *.h *.c *.cxx *.hpp *.idl *.rgs *.rc *.proto)
+            file(GLOB_RECURSE PRJSOURCES *.cpp *.h *.c *.cxx *.hpp *.rgs *.rc *.proto)
         elseif("${type}" MATCHES "${CPPCLI_PROJECT_TYPES}")
-            file(GLOB_RECURSE PRJSOURCES *.cpp *.h *.c *.cxx *.hpp *.idl *.rgs *.rc)
+            file(GLOB_RECURSE PRJSOURCES *.cpp *.h *.c *.cxx *.hpp *.rgs *.rc)
         elseif("${type}" MATCHES "${CS_PROJECT_TYPES}")
             file(GLOB_RECURSE PRJSOURCES *.cs *.resx *.bmp *.png *.csproj *.jpg)
         endif()
@@ -973,76 +975,7 @@ function(YBUILD_ADD_STANDARD_PROJECT name type)
         
         foreach(src ${PRJSOURCES})
             get_filename_component(PRJSRC_EXT "${src}" EXT)
-            if("${PRJSRC_EXT}" STREQUAL ".idl")
-                get_filename_component(IDL_NAME "${src}" NAME_WE)
-                
-                set(IDL_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/${YBUILD_CFG_NAME}")
-                set(IDL_GENERATED_TLB_NAME "${YBUILD_FULL_RUNTIME_OUTPUT_DIRECTORY}/${IDL_NAME}.tlb")
-                set(TLB_MANAGED_INTEROP_ASSEMBLY "${YBUILD_FULL_RUNTIME_OUTPUT_DIRECTORY}/Interop.${IDL_NAME}.dll")
-                
-                set(IDL_GENERATED_SOURCES "${IDL_TARGET_DIR}/${IDL_NAME}.h" "${IDL_TARGET_DIR}/${IDL_NAME}_i.c")
-                set(IDL_GENERATED_C_SOURCES "${IDL_TARGET_DIR}/${IDL_NAME}_i.c" "${IDL_TARGET_DIR}/${IDL_NAME}_p.c" "${IDL_TARGET_DIR}/dlldata.c")
-                set(IDL_GENERATED_SOURCES_PS "${IDL_GENERATED_SOURCES}" "${IDL_TARGET_DIR}/${IDL_NAME}_p.c" "${IDL_TARGET_DIR}/dlldata.c")
-                set(IDL_GENERATED_FILES "${IDL_GENERATED_SOURCES_PS}" "${IDL_GENERATED_TLB_NAME}" "${TLB_MANAGED_INTEROP_ASSEMBLY}")
-                
-                set(GENERATED_PRJSOURCES "${GENERATED_PRJSOURCES}" "${IDL_GENERATED_SOURCES}")
-                
-                include_directories("${IDL_TARGET_DIR}")
-                
-                # Это для того, чтобы в ресурсы можно было включить сгенерированную type library.
-                include_directories("${YBUILD_FULL_RUNTIME_OUTPUT_DIRECTORY}")
-                
-                file(TO_CMAKE_PATH "${YBUILD_TPLIB_PSDK_PATH}/include" PSDK_INCLUDE_PATH)
-                get_directory_property(INCLUDE_DIRS INCLUDE_DIRECTORIES)
-                foreach(dir ${INCLUDE_DIRS})
-                    file(TO_CMAKE_PATH "${dir}" CUR_DIR)
-                    file(TO_NATIVE_PATH "${dir}" NATIVE_INCLUDE_DIR)
-                    
-                    if(NOT "${CUR_DIR}" STREQUAL "${PSDK_INCLUDE_PATH}" OR NOT MSVC_VERSION LESS 1500)
-                        set(MIDL_INCLUDE_DIRS_ARG ${MIDL_INCLUDE_DIRS_ARG} "/I${NATIVE_INCLUDE_DIR}")
-                    endif()
-                endforeach(dir)
-                
-                file(TO_NATIVE_PATH "${src}" NATIVE_IDL_PATH)
-                file(TO_NATIVE_PATH "${IDL_GENERATED_TLB_NAME}" NATIVE_TLB_PATH)
-                
-                add_custom_command(
-                    OUTPUT "${IDL_TARGET_DIR}/dummy_idl_${IDL_NAME}.dependency"
-                    COMMAND ${CMAKE_COMMAND} -E make_directory "${IDL_TARGET_DIR}"
-                    COMMAND ${CMAKE_COMMAND} -E touch "${IDL_TARGET_DIR}/dummy_idl_${IDL_NAME}.dependency"
-                    VERBATIM
-                    )
-                
-                add_custom_command(
-                    OUTPUT ${IDL_GENERATED_FILES}
-                    DEPENDS "${src}" "${IDL_TARGET_DIR}/dummy_idl_${IDL_NAME}.dependency"
-                    COMMAND midl.exe /nologo /char signed /env win32 /Oicf /tlb ${NATIVE_TLB_PATH} ${MIDL_INCLUDE_DIRS_ARG} "${NATIVE_IDL_PATH}"
-                    COMMAND tlbimp.exe ${NATIVE_TLB_PATH} /out:${TLB_MANAGED_INTEROP_ASSEMBLY} /namespace:${MANAGED_INTEROP_NAMESPACE_NAME}
-                    WORKING_DIRECTORY ${IDL_TARGET_DIR}
-                    VERBATIM
-                    )
-                    
-                foreach(_dep_FILE ${IDL_GENERATED_FILES})
-                    MACRO_ADD_FILE_DEPENDENCIES(${_dep_FILE} "${src}")
-                endforeach(_dep_FILE)
-
-                set_source_files_properties(${IDL_GENERATED_FILES} PROPERTIES GENERATED TRUE)
-                set_source_files_properties(${src} ${IDL_TARGET_DIR}/${IDL_NAME}.h PROPERTIES HEADER_FILE_ONLY TRUE)
-
-                foreach(csrc ${IDL_GENERATED_C_SOURCES})
-                    get_source_file_property(CPROPERTIES "${csrc}" COMPILE_FLAGS)
-                    if(NOT CPROPERTIES)
-                        set(CPROPERTIES)
-                    endif(NOT CPROPERTIES)
-                    set_source_files_properties("${csrc}" PROPERTIES COMPILE_FLAGS "/Y- ${CPROPERTIES}")
-                endforeach(csrc)
-                
-                if(GENERATE_PROXY_STUB)
-                    add_library(${name}PS SHARED ${IDL_GENERATED_SOURCES_PS} ${name}ps.def)
-                    target_link_libraries(${name}PS rpcns4.lib uuid.lib rpcrt4.lib oleaut32.lib)
-                    set_target_properties(${name}PS PROPERTIES COMPILE_DEFINITIONS "REGISTER_PROXY_DLL")
-                endif()
-            elseif("${PRJSRC_EXT}" STREQUAL ".proto")
+            if("${PRJSRC_EXT}" STREQUAL ".proto")
                 set(PRJ_HAVEPROTO TRUE)
                 set(PRJ_PROTO_LIST "${PRJ_PROTO_LIST}" "${src}")
                 get_filename_component(PROTO_NAME "${src}" NAME_WE)
@@ -1159,7 +1092,7 @@ function(YBUILD_ADD_STANDARD_PROJECT name type)
             set(PROJECT_EXT ${YBUILD_EXTENSION_FOR_MANAGED_PROJECTS})
         endif()
         
-        add_custom_target(${name}
+        add_custom_target(${name} ${RUN_EVERY_TIME}
             DEPENDS ${YBUILD_FULL_RUNTIME_OUTPUT_DIRECTORY}/${TGT_BINARY_NAME}.${TARGET_EXT} ${YBUILD_FULL_RUNTIME_OUTPUT_DIRECTORY}/${TGT_BINARY_NAME}.pdb
             SOURCES ${PRJSOURCES}
             )
