@@ -44,23 +44,31 @@ GENERATOR_NMAKE_MAKEFILES = "NMake Makefiles"
 GENERATOR_NMAKE_MAKEFILES_VS14 = "NMake Makefiles/VS14"
 GENERATOR_NMAKE_MAKEFILES_VS15 = "NMake Makefiles/VS15"
 GENERATOR_NMAKE_MAKEFILES_VS16 = "NMake Makefiles/VS16"
+GENERATOR_NMAKE_MAKEFILES_VS17 = "NMake Makefiles/VS17"
 GENERATOR_VS14 = "Visual Studio 14"
 GENERATOR_VS15 = "Visual Studio 15"
 GENERATOR_VS16 = "Visual Studio 16"
+GENERATOR_VS17 = "Visual Studio 17"
 GENERATOR_NONE = "None"
 
 nmake_generators = [GENERATOR_NMAKE_MAKEFILES, GENERATOR_NMAKE_MAKEFILES_VS14,
                     GENERATOR_NMAKE_MAKEFILES_VS15, GENERATOR_NMAKE_MAKEFILES_VS16]
 vs_generators = [GENERATOR_NMAKE_MAKEFILES, GENERATOR_NMAKE_MAKEFILES_VS14,
                  GENERATOR_NMAKE_MAKEFILES_VS15, GENERATOR_NMAKE_MAKEFILES_VS16,
-                 GENERATOR_VS14, GENERATOR_VS15, GENERATOR_VS16]
+                 GENERATOR_NMAKE_MAKEFILES_VS17, GENERATOR_VS14, GENERATOR_VS15,
+                 GENERATOR_VS16, GENERATOR_VS17]
 
 umake_generators = [GENERATOR_UNIX_MAKEFILES, GENERATOR_ECLIPSE4_UNIX_MAKEFILES]
 
 blackhole = open(devnull,'w')
 
-if '-v' in args_list or '--verbose' in args_list :
+if '-v' in args_list:
     blackhole = stdout
+    system_gen_args.remove('-v')
+
+if '--verbose' in args_list:
+    blackhole = stdout
+    system_gen_args.remove('--verbose')
 
 configs = ['Release']
 libs = []

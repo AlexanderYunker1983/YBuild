@@ -440,6 +440,10 @@ function(YBUILD_ADD_3RDPARTY_DIRECTORIES)
         if(COMMAND YBUILD_TPLIB_VSCRT16_EXISTS)
             set(VSCRT "${YBUILD_TPLIB_VSCRT16_PATH}")
         endif()
+		
+        if(COMMAND YBUILD_TPLIB_VSCRT17_EXISTS)
+            set(VSCRT "${YBUILD_TPLIB_VSCRT17_PATH}")
+        endif()
 
         if(DEFINED VSCRT AND YWIN64)
             add_definitions(-DX64)
